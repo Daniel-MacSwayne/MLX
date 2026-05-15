@@ -15,12 +15,12 @@ import matplotlib.pyplot as plt
 ###############################################################################
 
 class Diffusion_(nn.Module):
-    """A class that gives a Model diffusion-based training methods."""
+    """A class that gives diffusion-based training methods to any Model."""
     
     def __init__(self, Model, D:tuple, T:int=250, Noise_Type='Cosine', β_min=0.0001, β_max=0.02, Plot_=False):
         super(Diffusion_, self).__init__()
         
-        self.D = D          # Data Dimensionality. Arbitrary Tuple Shape (D...)
+        self.D = D          # Data Dimensionality. Arbitrary Tuple Shape (D...) = (D1, D2, D3...)
         self.T = T          # Timesteps. int
         self.Model = Model
         self.Noise_Schedule_(β_min, β_max, Type=Noise_Type)
@@ -69,7 +69,8 @@ class Diffusion_(nn.Module):
         assert x_t.shape[0] == t.shape[0], f"{x_t.shape}, {t.shape}"
         assert x_t.shape[1:] == self.D,    f"{x_t.shape}, {self.D}"
     
-        if c is None:
+        # print(tc.isnan(c).any())
+        if c is None or tc.isnan(c).all():
             ϵ_θ = self.Model(x_t, t)        # (B, D...) Predicted Absolute Noise
         else:
             ϵ_θ = self.Model(x_t, t, c)     # (B, D...) Predicted Absolute Noise        
@@ -82,7 +83,7 @@ class Diffusion_(nn.Module):
     def Forward_(self, x_0:tc.tensor, t:tc.tensor):
         """Forward Diffusion Process"""
         # x_0:  (B, D...)
-        # t:    (B)
+        # t:    (B, T)
         assert x_0.shape[0] == t.shape[0], f"{x_0.shape}, {t.shape}"
         assert x_0.shape[1:] == self.D,    f"{x_0.shape}, {self.D}"
 
@@ -101,13 +102,15 @@ class Diffusion_(nn.Module):
     
     
     def Backward_(self, x_t:tc.tensor, ϵ_θ:tc.tensor, t:tc.tensor, c=None, Method='DDIM'):
-        """Reverse Diffusion Process"""
+        """1 Step of Reverse Diffusion Process"""
         # x_t:  (B, D...)
+        # ϵ_θ:  (B, D...)
         # t:    (B,)
         # c:    [...]
         assert x_t.shape[0] == t.shape[0],  f"{x_t.shape}, {t.shape}"
         assert x_t.shape[1:] == self.D,     f"{x_t.shape}, {self.D}"
         assert x_t.shape == ϵ_θ.shape,      f"{x_t.shape}, {ϵ_θ.shape}"
+        # print(x_t.shape, ϵ_θ.shape, t.shape)
 
         B = t.shape[0]
         
@@ -118,7 +121,7 @@ class Diffusion_(nn.Module):
             m = (t != 1) #* Use_Noise                                       # (B,)          
             t = t.reshape((B,)+(1,)*len(self.D))                            # (B, 1...)
             
-            # x_t-1
+            # x_(t-1)
             x_t_1 = x_t                                                     # (B, D...)
             x_t_1 -= self.β_[t]*(1 - self.αc_[t])**-0.5 * ϵ_θ               # (B, D...)
             x_t_1 *= self.α_[t]**-0.5                                       # (B, D...)
@@ -127,18 +130,20 @@ class Diffusion_(nn.Module):
             
         elif Method == 'DDIM':
             
-            # x_t-1
+            # x_(t-1)
             x_t_1 = x_t                                                     # (B, D...)
-            x_t_1 += ϵ_θ * (self.αc_[t]/self.αc_[t-1] - self.αc_[t])**0.5   # (B, D...)
-            x_t_1 -= ϵ_θ * (1 - self.αc_[t])**0.5                           # (B, D...)
-            x_t_1 *= (self.αc_[t-1]/self.αc_[t])**0.5                       # (B, D...)
+            αc_ = self.αc_.view(self.T, *([1] * len(self.D)))               # (T, 1...)
             
-            x_0_ = x_t - (1 - self.αc_[t])**0.5 * ϵ_θ                       # (B, D...)
-            x_0_ *= self.αc_[t]**-0.5                                       # (B, D...)
+            x_t_1 += ϵ_θ * (αc_[t]/αc_[t-1] - αc_[t])**0.5                  # (B, D...)                                            # (B, D...)
+            x_t_1 -= ϵ_θ * (1 - αc_[t])**0.5                                # (B, D...)
+            x_t_1 *= (αc_[t-1]/αc_[t])**0.5                                 # (B, D...)
+            
+            x_0_ = x_t - (1 - αc_[t])**0.5 * ϵ_θ                            # (B, D...)
+            x_0_ *= αc_[t]**-0.5                                            # (B, D...)
             
         
-        x_0_ = x_t - (1 - self.αc_[t])**0.5 * ϵ_θ                           # (B, D...)
-        x_0_ *= self.αc_[t]**-0.5                                           # (B, D...)
+        x_0_ = x_t - (1 - αc_[t])**0.5 * ϵ_θ                                # (B, D...)
+        x_0_ *= αc_[t]**-0.5                                                # (B, D...)
         
         assert x_t.shape == x_0_.shape,     f"{x_t.shape}, {x_0_.shape}"
         assert x_t.shape == x_t_1.shape,    f"{x_t.shape}, {x_t_1.shape}"
@@ -147,7 +152,7 @@ class Diffusion_(nn.Module):
     
     
     def Sample_(self, x_T:tc.tensor=None, c=None, Method='DDIM'):
-        """Sample the data space and move it towards the data manifold"""
+        """Randomly sample the data space and move it back towards the data manifold"""
         # x_T:  (B, D...)
         # c:    (B, C...)
 
@@ -160,15 +165,13 @@ class Diffusion_(nn.Module):
         X_ = tc.zeros((self.T, B,)+self.D)                                  # (T, B, D...)
         X_[-1] = x_T                                                        # (B, D...)
         
-        t_ = tc.arange(self.T-1, 0, -1)[:, None]                            # (T, 1)
+        t_ = tc.arange(self.T-1, 0, -1)[:, None].repeat(1, B)               # (T, B)
+        
         
         for t in t_:
-
-            print(t_.shape, t.shape, X_[t[0]].shape)#, ϵ_θ.shape)
-            
+            # print(X_.shape, t_.shape, t.shape, X_[t[0]].shape)#, ϵ_θ.shape)
             ϵ_θ = self(X_[t[0]], t, c)                                      # (B, D...)
             X_[t[0]-1] = self.Backward_(X_[t[0]], ϵ_θ, t, c, Method)[0]     # (B, D...)
-
 
         
         X_ = X_.transpose(0, 1)                                             # (B, T, D...)
@@ -195,7 +198,6 @@ class Diffusion_(nn.Module):
                 
                 x_t, ϵ = self.Forward_(x_0, t)                              # (B, D...)
                 ϵ_θ = self(x_t, t, c)                                       # (B, D...)
-                # x_t_1, ϵ_θ, x_0_ = self.Backward_(x_t, t, c, Use_Noise, One_Shot) # (B, D...)
 
                 L = Loss_fn(ϵ_θ, ϵ)                                         # (1,)
                 
@@ -207,17 +209,10 @@ class Diffusion_(nn.Module):
                     print ('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}' 
                             .format(i+1, num_epochs, (j+1), len(Dataloader), L.item()))
                     
-                    # if self.Plot_:
-                    #     self.Plot_(x_0, x_0_, x_t, x_t_1, ϵ, ϵ_θ, c)
+                    if self.Plot_:
+                        x_t_1, x_0_ = self.Backward_(x_t, ϵ_θ, t)
+                        self.Plot_([t, x_0, x_0_, x_t, x_t_1, ϵ, ϵ_θ, c])
                     
-                    # plt.imshow(x_0.numpy()[0, 0]), plt.show()
-                    # plt.imshow(x_t.numpy()[0, 0]), plt.show()
-                    # plt.imshow(x_t_1.detach().numpy()[0, 0]), plt.show()
-                    
-                    # plt.imshow(ϵ.numpy()[0, 0]), plt.show()
-                    # plt.imshow(ϵ_θ.detach().numpy()[0, 0]), plt.show()
-                    
-                    # tc.save(self.state_dict(), "Model.pth")
         return
 
 

@@ -510,6 +510,7 @@ class Cluster_Pool_(nn.Module):
 ###############################################################################
 # Standard Networks
 
+# MLP with residual layers
 class NN_(nn.Module):
     def __init__(self, D_in:tuple, D_out:tuple, h=256, l=10, Act='GELU', Output_Act=None):
         super().__init__()
@@ -550,8 +551,8 @@ class NN_(nn.Module):
 
         return y
 
-
-class ERNN__(nn.Module):
+# MLP with residual layers and embedding
+class ERNN_(nn.Module):
     
     def __init__(self, D_in:int, D_out:int, E:int):
         super().__init__()
@@ -582,7 +583,7 @@ class ERNN__(nn.Module):
         return y
         
     
-class DDNN__(nn.Module):
+class DDNN_(nn.Module):
     
     def __init__(self, D_in:tuple, D_out:tuple, E:int):
         super().__init__()
@@ -959,6 +960,7 @@ class ViT_AE_(nn.Module):
         return x_, z_
 
 ###############################################################################
+# Video Auto-encoder
 
 class Video_AE_(nn.Module):
     def __init__(self, c=64, C=3, L=64, H=64, W=64, f_s=8, f_t=4):
@@ -1048,6 +1050,7 @@ class Video_AE_(nn.Module):
         return x_, z_
     
 ###############################################################################
+# Auto-regressive conditional diffusion model
 
 class ARCDM_(nn.Module):
     
