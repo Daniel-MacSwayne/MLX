@@ -1,5 +1,0 @@
-setup.py
-MLX.egg-info/PKG-INFO
-MLX.egg-info/SOURCES.txt
-MLX.egg-info/dependency_links.txt
-MLX.egg-info/top_level.txt
